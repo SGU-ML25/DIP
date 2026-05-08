@@ -8,8 +8,8 @@ class Config:
     DATA_ROOT = "/mnt/data/1_Projects/DIP/data/"
     CATEGORIES = ["bottle", "cable", "capsule", "carpet", "grid", "hazelnut", "leather", "metal_nut", "pill", "screw", "tile", "toothbrush", "transistor", "wood", "zipper"]
     IMG_SIZE = 256
-    PATCH_SIZE = 16
-    BATCH_SIZE = 4 
+    PATCH_SIZE = 8
+    BATCH_SIZE = 8
     LR_AE = 1e-4
     LR_PRED = 2e-4
     LR_RL = 1e-5
