@@ -64,17 +64,19 @@ class UNetDecoderBlock(nn.Module):
 class Autoencoder(nn.Module):
     def __init__(self):
         super(Autoencoder, self).__init__()
-        self.enc1 = ResidualBlock(3, 64)
-        self.enc2 = ResidualBlock(64, 128)
-        self.enc3 = ResidualBlock(128, 256)
-        self.enc4 = ResidualBlock(256, 512)
+        # Reduced base channels from 64 to 32
+        self.enc1 = ResidualBlock(3, 32)
+        self.enc2 = ResidualBlock(32, 64)
+        self.enc3 = ResidualBlock(64, 128)
+        self.enc4 = ResidualBlock(128, 256)
         self.pool = nn.MaxPool2d(2)
-        self.bottleneck = ResidualBlock(512, 1024)
-        self.dec4 = UNetDecoderBlock(1024, 512)
-        self.dec3 = UNetDecoderBlock(512, 256)
-        self.dec2 = UNetDecoderBlock(256, 128)
-        self.dec1 = UNetDecoderBlock(128, 64)
-        self.final = nn.Conv2d(64, 3, 1)
+        self.bottleneck = ResidualBlock(256, 512)
+
+        self.dec4 = UNetDecoderBlock(512, 256)
+        self.dec3 = UNetDecoderBlock(256, 128)
+        self.dec2 = UNetDecoderBlock(128, 64)
+        self.dec1 = UNetDecoderBlock(64, 32)
+        self.final = nn.Conv2d(32, 3, 1)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
@@ -142,53 +144,49 @@ class ASPP(nn.Module):
 class PredictorFCN(nn.Module):
     def __init__(self):
         super(PredictorFCN, self).__init__()
-        # Remove bottleneck for Kaggle. Input is ResNet(512) + Residual Map(1) = 513
-        # Use ASPP to capture multi-scale context
-        self.aspp = ASPP(in_channels=513, out_channels=256)
-        
+        # ASPP output reduced from 256 to 128
+        self.aspp = ASPP(in_channels=513, out_channels=128)
+
         self.att1 = SpatialAttention()
-        self.conv1 = nn.Conv2d(256, 128, 3, padding=1)
-        self.conv2 = nn.Conv2d(128, 64, 3, padding=1)
+        self.conv1 = nn.Conv2d(128, 64, 3, padding=1)
+        self.conv2 = nn.Conv2d(64, 32, 3, padding=1)
         self.att2 = SpatialAttention()
-        self.conv3 = nn.Conv2d(64, 32, 3, padding=1)
-        self.conv4 = nn.Conv2d(32, 1, 1)
+        self.conv3 = nn.Conv2d(32, 16, 3, padding=1)
+        self.conv4 = nn.Conv2d(16, 1, 1)
 
     def forward(self, res_map, resnet_features):
-        # resnet_features is 512x8x8, upscale to 256x256
         feat_upscaled = F.interpolate(resnet_features, size=res_map.shape[2:], mode='bilinear', align_corners=True)
         x = torch.cat([res_map, feat_upscaled], dim=1)
-        
+
         x = self.aspp(x)
         x = self.att1(x)
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = self.att2(x)
         x = F.relu(self.conv3(x))
-        
-        # Return logits for stability with BCEWithLogitsLoss
+
         return self.conv4(x)
 
 class RLAgent(nn.Module):
     def __init__(self):
         super(RLAgent, self).__init__()
-        # Deeper feature extractor
+        # Reduced linear layers from 512/256 to 256/128
         self.features = nn.Sequential(
-            nn.Conv2d(518, 256, 3, stride=2, padding=1), # 4x4
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(256, 128, 3, stride=2, padding=1), # 2x2
+            nn.Conv2d(518, 128, 3, stride=2, padding=1), 
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
+            nn.Conv2d(128, 64, 3, stride=2, padding=1), 
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
             nn.Flatten(),
-            nn.Linear(128 * 2 * 2, 512),
+            nn.Linear(64 * 2 * 2, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(0.3),
-            nn.Linear(512, 256) 
+            nn.Linear(256, 128) 
         )
 
     def forward(self, state, resnet_features):
-        # state is 6x256x256, pool down to 8x8 to match resnet_features
         state_pooled = F.adaptive_avg_pool2d(state, (8, 8))
-        x = torch.cat([state_pooled, resnet_features], dim=1) # 6 + 512 = 518 channels
+        x = torch.cat([state_pooled, resnet_features], dim=1) 
         logits = self.features(x)
         return F.softmax(logits, dim=-1)

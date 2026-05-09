@@ -110,4 +110,9 @@ def evaluate(category):
     print(f"Pixel-level F1-max: {f1_max:.4f}")
 
 if __name__ == "__main__":
-    evaluate("bottle")
+    import argparse
+    parser = argparse.ArgumentParser(description="Evaluate DIP model on a specific category.")
+    parser.add_argument("--category", type=str, default="bottle", help="Category to evaluate.")
+    args = parser.parse_args()
+    
+    evaluate(args.category)

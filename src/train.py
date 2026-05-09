@@ -144,4 +144,9 @@ def train(category):
     print("Training completed and models saved.")
 
 if __name__ == "__main__":
-    train("bottle")
+    import argparse
+    parser = argparse.ArgumentParser(description="Train DIP model on a specific category.")
+    parser.add_argument("--category", type=str, default="bottle", help="Category to train on.")
+    args = parser.parse_args()
+    
+    train(args.category)
