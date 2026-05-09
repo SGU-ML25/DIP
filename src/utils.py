@@ -5,7 +5,7 @@ import numpy as np
 import cv2
 
 class Config:
-    DATA_ROOT = "/mnt/data/1_Projects/DIP/data/"
+    DATA_ROOT = "./data/"
     CATEGORIES = ["bottle", "cable", "capsule", "carpet", "grid", "hazelnut", "leather", "metal_nut", "pill", "screw", "tile", "toothbrush", "transistor", "wood", "zipper"]
     IMG_SIZE = 256
     PATCH_SIZE = 8
