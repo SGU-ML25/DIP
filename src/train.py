@@ -133,11 +133,11 @@ def train(category):
         torch.cuda.empty_cache()
 
     os.makedirs("checkpoints", exist_ok=True)
-    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    torch.save(ae.state_dict(), f"checkpoints/ae_{category}_{current_time}.pth")
-    torch.save(predictor.state_dict(), f"checkpoints/pred_{category}_{current_time}.pth")
-    torch.save(agent.state_dict(), f"checkpoints/agent_{category}_{current_time}.pth")
-    torch.save(template, f"checkpoints/template_{category}_{current_time}.pth") 
+    # current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    torch.save(ae.state_dict(), f"checkpoints/ae_{category}_{Config.current_time}.pth")
+    torch.save(predictor.state_dict(), f"checkpoints/pred_{category}_{Config.current_time}.pth")
+    torch.save(agent.state_dict(), f"checkpoints/agent_{category}_{Config.current_time}.pth")
+    torch.save(template, f"checkpoints/template_{category}_{Config.current_time}.pth") 
     print("Training completed and models saved.")
 
 if __name__ == "__main__":
@@ -146,4 +146,4 @@ if __name__ == "__main__":
     parser.add_argument("--category", type=str, default="bottle", help="Category to train on.")
     args = parser.parse_args()
     
-    train(args.category)
+    train(args.category, Config.current_time)

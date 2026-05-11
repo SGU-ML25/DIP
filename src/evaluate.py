@@ -22,9 +22,9 @@ def evaluate(category):
     predictor = PredictorFCN().to(device)
     backbone = ResNetBackbone().to(device).eval()
     
-    ae_path = f"checkpoints/ae_{category}.pth"
-    pred_path = f"checkpoints/pred_{category}.pth"
-    temp_path = f"checkpoints/template_{category}.pth"
+    ae_path = f"checkpoints/ae_{category}_{Config.current_time}.pth"
+    pred_path = f"checkpoints/pred_{category}_{Config.current_time}.pth"
+    temp_path = f"checkpoints/template_{category}_{Config.current_time}.pth"
     
     if not os.path.exists(ae_path) or not os.path.exists(pred_path) or not os.path.exists(temp_path):
         print(f"Checkpoints or Template for {category} not found. Please train first.")
@@ -79,22 +79,22 @@ def evaluate(category):
             
             label = batch['label'].item()
             if (label == 1 and i < 50) or i < 5:
-                fig, axes = plt.subplots(1, 6, figsize=(30, 5))
+                fig, axes = plt.subplots(1, 4, figsize=(20, 5))
                 axes[0].imshow(images[0].cpu().permute(1, 2, 0))
                 axes[0].set_title(f"Original ({label})")
-                axes[1].imshow(template[0].cpu().permute(1, 2, 0))
-                axes[1].set_title("Golden Template")
-                axes[2].imshow(reconstructed[0].cpu().permute(1, 2, 0))
-                axes[2].set_title("Reconstructed")
-                axes[3].imshow(batch['mask'][0, 0], cmap='gray')
-                axes[3].set_title("GT Mask")
-                axes[4].imshow(combined_np, cmap='hot')
-                axes[4].set_title("Raw Score")
-                axes[5].imshow(processed_mask, cmap='gray')
-                axes[5].set_title("DIP Refined")
+                
+                axes[1].imshow(reconstructed[0].cpu().permute(1, 2, 0))
+                axes[1].set_title("Reconstructed")
+                
+                axes[3].imshow(combined_np, cmap='jet')
+                axes[3].set_title("Anomaly Map")
+                
+                axes[2].imshow(batch['mask'][0, 0], cmap='gray')
+                axes[2].set_title("GT Mask")
+                
                 for ax in axes: ax.axis('off')
                 plt.tight_layout()
-                plt.savefig(f"results/{category}_template_{i}.png")
+                plt.savefig(f"results/{category}_diag_{i}.png")
                 plt.close()
 
     all_masks = (np.array(all_masks) > 0.5).astype(np.int32)

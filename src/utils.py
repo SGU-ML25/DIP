@@ -3,11 +3,13 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import cv2
+from datetime import datetime
 
 class Config:
     DATA_ROOT = "./data/"
     CATEGORIES = ["bottle", "cable", "capsule", "carpet", "grid", "hazelnut", "leather", "metal_nut", "pill", "screw", "tile", "toothbrush", "transistor", "wood", "zipper"]
     IMG_SIZE = 128
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     PATCH_SIZE = 4
     BATCH_SIZE = 4
     LR_AE = 1e-4
