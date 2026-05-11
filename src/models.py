@@ -64,7 +64,6 @@ class UNetDecoderBlock(nn.Module):
 class Autoencoder(nn.Module):
     def __init__(self):
         super(Autoencoder, self).__init__()
-        # Reduced base channels from 64 to 32
         self.enc1 = ResidualBlock(3, 32)
         self.enc2 = ResidualBlock(32, 64)
         self.enc3 = ResidualBlock(64, 128)
@@ -108,14 +107,40 @@ class SpatialAttention(nn.Module):
         att = self.conv(att)
         return x * self.sigmoid(att)
 
+class ChannelAttention(nn.Module):
+    def __init__(self, in_planes, ratio=16):
+        super(ChannelAttention, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+           
+        self.fc = nn.Sequential(nn.Conv2d(in_planes, in_planes // ratio, 1, bias=False),
+                               nn.ReLU(),
+                               nn.Conv2d(in_planes // ratio, in_planes, 1, bias=False))
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avg_out = self.fc(self.avg_pool(x))
+        max_out = self.fc(self.max_pool(x))
+        out = avg_out + max_out
+        return x * self.sigmoid(out)
+
 class ResNetBackbone(nn.Module):
     def __init__(self):
         super().__init__()
         resnet = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
-        self.features = nn.Sequential(*list(resnet.children())[:-2]) 
-        # For 256x256 input, output is 512x8x8
+        self.initial = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool)
+        self.layer1 = resnet.layer1
+        self.layer2 = resnet.layer2
+        self.layer3 = resnet.layer3
+        self.layer4 = resnet.layer4
+
     def forward(self, x):
-        return self.features(x)
+        x = self.initial(x)
+        l1 = self.layer1(x)
+        l2 = self.layer2(l1) # 128x16x16 for 128x128 input
+        l3 = self.layer3(l2) # 256x8x8
+        l4 = self.layer4(l3) # 512x4x4
+        return l2, l3, l4
 
 class ASPP(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -144,49 +169,74 @@ class ASPP(nn.Module):
 class PredictorFCN(nn.Module):
     def __init__(self):
         super(PredictorFCN, self).__init__()
-        # ASPP output reduced from 256 to 128
+        # Input: residual_map (1) + l4 (512) = 513
         self.aspp = ASPP(in_channels=513, out_channels=128)
 
         self.att1 = SpatialAttention()
+        
         self.conv1 = nn.Conv2d(128, 64, 3, padding=1)
         self.conv2 = nn.Conv2d(64, 32, 3, padding=1)
+        
         self.att2 = SpatialAttention()
+        
         self.conv3 = nn.Conv2d(32, 16, 3, padding=1)
         self.conv4 = nn.Conv2d(16, 1, 1)
 
-    def forward(self, res_map, resnet_features):
-        feat_upscaled = F.interpolate(resnet_features, size=res_map.shape[2:], mode='bilinear', align_corners=True)
-        x = torch.cat([res_map, feat_upscaled], dim=1)
+    def forward(self, res_map, resnet_feats):
+        l2, l3, l4 = resnet_feats
+        
+        # Upscale multi-scale features to match res_map
+        l4_up = F.interpolate(l4, size=res_map.shape[2:], mode='bilinear', align_corners=True)
+        
+        x = torch.cat([res_map, l4_up], dim=1)
 
         x = self.aspp(x)
         x = self.att1(x)
+        
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
+        
         x = self.att2(x)
+        
         x = F.relu(self.conv3(x))
-
         return self.conv4(x)
 
 class RLAgent(nn.Module):
-    def __init__(self):
+    def __init__(self, out_dim=128):
         super(RLAgent, self).__init__()
-        # Reduced linear layers from 512/256 to 256/128
-        self.features = nn.Sequential(
-            nn.Conv2d(518, 128, 3, stride=2, padding=1), 
+        # State: 6 channels (RGB, Context, History, Pos) + Backbone features
+        # Backbone l3 is 256x8x8. We'll pool state to 8x8 as well.
+        self.shared = nn.Sequential(
+            nn.Conv2d(6 + 256, 128, 3, stride=2, padding=1), 
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
             nn.Conv2d(128, 64, 3, stride=2, padding=1), 
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((2, 2)), # Cố định đầu ra 2x2 để Linear luôn là 256
             nn.Flatten(),
             nn.Linear(64 * 2 * 2, 256),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.3),
-            nn.Linear(256, 128) 
+            nn.Dropout(0.3)
+        )
+        
+        self.action_head = nn.Linear(256, out_dim)
+        self.threshold_head = nn.Sequential(
+            nn.Linear(256, 1),
+            nn.Sigmoid()
         )
 
-    def forward(self, state, resnet_features):
-        state_pooled = F.adaptive_avg_pool2d(state, (8, 8))
-        x = torch.cat([state_pooled, resnet_features], dim=1) 
-        logits = self.features(x)
-        return F.softmax(logits, dim=-1)
+    def forward(self, state, resnet_feats):
+        l2, l3, l4 = resnet_feats
+        # Ensure state_pooled spatial size matches l3 (typically 8x8 or 16x16 depending on input size)
+        target_h, target_w = l3.shape[2], l3.shape[3]
+        state_pooled = F.adaptive_avg_pool2d(state, (target_h, target_w))
+        
+        x = torch.cat([state_pooled, l3], dim=1)
+        
+        features = self.shared(x)
+        
+        probs = F.softmax(self.action_head(features), dim=-1)
+        threshold = self.threshold_head(features)
+        
+        return probs, threshold

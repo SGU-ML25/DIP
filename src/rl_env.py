@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
+from src.utils import get_sobel_map
 
 class RLAnomalyEnv:
     def __init__(self, config):
@@ -22,8 +23,7 @@ class RLAnomalyEnv:
         history = torch.from_numpy(history_map).to(image.device).unsqueeze(1)
         history = F.interpolate(history, size=(H, W), mode='nearest')
         
-        # 6. Position (1 channel): Distance from center or coordinate grid
-        # Create a coordinate grid [-1, 1]
+        # 6. Position (1 channel): Distance from center
         grid_y, grid_x = torch.meshgrid(torch.linspace(-1, 1, H), torch.linspace(-1, 1, W), indexing='ij')
         pos = torch.sqrt(grid_y**2 + grid_x**2).unsqueeze(0).unsqueeze(0).to(image.device)
         pos = pos.repeat(B, 1, 1, 1)
@@ -34,6 +34,9 @@ class RLAnomalyEnv:
         B = image.shape[0]
         rewards = []
         
+        # Identify edges to penalize False Positives
+        sobel_map = get_sobel_map(image)
+        
         for i in range(B):
             row = action[i] // self.num_patches_side
             col = action[i] % self.num_patches_side
@@ -42,21 +45,27 @@ class RLAnomalyEnv:
             
             patch_img = image[i, :, y:y+self.patch_size, x:x+self.patch_size]
             patch_pred = predictor_map[i, 0, y:y+self.patch_size, x:x+self.patch_size]
+            patch_sobel = sobel_map[i, 0, y:y+self.patch_size, x:x+self.patch_size]
             
-            # R_clone: Variance as proxy for detail
+            # R_clone: Variance as proxy for detail (encourage looking at complex areas)
             r_clone = torch.var(patch_img).item()
             
             # R_cover: Penalize repeat sampling
             h_val = history_map[i, row, col]
             r_cover = 1.0 / (1.0 + h_val)
             
-            # R_pred: Predictor signal
+            # R_pred: Predictor signal (exploit areas where predictor sees something)
             r_pred = torch.mean(patch_pred).item()
             
-            reward = beta * (r_clone + r_cover) + (1 - beta) * r_pred
+            # R_edge_penalty: Penalize high predictor signal on edges of "good" images
+            # Since we only call this on good images during training, r_pred IS the False Positive signal
+            edge_intensity = torch.mean(patch_sobel).item()
+            r_edge_penalty = -1.0 * (edge_intensity * r_pred)
+            
+            reward = beta * (r_clone + r_cover) + (1 - beta) * r_pred + 0.5 * r_edge_penalty
             rewards.append(reward)
             
-            # Update history map (this should probably be done in the training loop, but let's track it)
+            # Update history map
             history_map[i, row, col] += 1.0
             
         return torch.tensor(rewards, device=image.device)

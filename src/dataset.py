@@ -38,7 +38,7 @@ class MVTecDataset(Dataset):
             self.mask_paths = [None] * len(self.image_paths)
         else:
             test_path = os.path.join(category_path, 'test')
-            defect_types = os.listdir(test_path)
+            defect_types = sorted(os.listdir(test_path))
             for d in defect_types:
                 d_path = os.path.join(test_path, d)
                 imgs = sorted(glob.glob(os.path.join(d_path, "*.png")))

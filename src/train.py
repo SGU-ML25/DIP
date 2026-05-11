@@ -1,4 +1,5 @@
 import os
+from tomlkit import datetime
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -13,17 +14,18 @@ import torch.nn as nn
 
 def train(category):
     device = torch.device(Config.DEVICE)
-    print(f"Starting training for {category} on {device}...")
+    print(f"Starting optimized training for {category} on {device}...")
     
     dataset = MVTecDataset(category, split='train')
-    dataloader = DataLoader(dataset, batch_size=Config.BATCH_SIZE, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=Config.BATCH_SIZE, shuffle=True, num_workers=Config.NUM_WORKERS, pin_memory=True)
     
     # Calculate Template (Golden Sample)
     template = calculate_category_template(dataloader, device)
     
     ae = Autoencoder().to(device)
     predictor = PredictorFCN().to(device)
-    agent = RLAgent().to(device)
+    num_actions = (Config.IMG_SIZE // Config.PATCH_SIZE)**2
+    agent = RLAgent(out_dim=num_actions).to(device)
     backbone = ResNetBackbone().to(device).eval()
     
     opt_ae = optim.Adam(ae.parameters(), lr=Config.LR_AE)
@@ -45,15 +47,15 @@ def train(category):
         total_loss_pred = 0
         
         for batch in dataloader:
-            images = batch['image'].to(device)
+            images = batch['image'].to(device, non_blocking=True)
             idxs = batch['idx'].numpy()
             batch_history = history_maps[idxs]
             
             with torch.no_grad():
-                resnet_features = backbone(images)
+                resnet_feats = backbone(images)
             
             # --- 1. Autoencoder Training ---
-            opt_ae.zero_grad()
+            opt_ae.zero_grad(set_to_none=True)
             with torch.amp.autocast('cuda'):
                 reconstructed = ae(images)
                 orig_sobel = get_sobel_map(images)
@@ -67,39 +69,36 @@ def train(category):
             
             scaler.scale(loss_ae).backward()
             scaler.step(opt_ae)
-            scaler.update()
             
             # --- 2. Predictor Training ---
             aug_images, anomaly_masks = generate_synthetic_anomalies(images)
             
-            opt_pred.zero_grad()
+            opt_pred.zero_grad(set_to_none=True)
             with torch.no_grad():
                 with torch.amp.autocast('cuda'):
                     aug_reconstructed = ae(aug_images)
-                    aug_resnet_feat = backbone(aug_images)
+                    aug_resnet_feats = backbone(aug_images)
                     
                     # AE Residual
                     res_ae = torch.abs(aug_images - aug_reconstructed).mean(dim=1, keepdim=True)
-                    # Template Residual (Awareness of "Golden Sample")
+                    # Template Residual
                     res_temp = torch.abs(aug_images - template).mean(dim=1, keepdim=True)
                     
-                    # Combined Residual Map for Predictor
                     residual_map = 0.5 * res_ae + 0.5 * res_temp
             
             with torch.amp.autocast('cuda'):
-                pred_logits = predictor(residual_map, aug_resnet_feat)
+                pred_logits = predictor(residual_map, aug_resnet_feats)
                 loss_pred = criterion_bce(pred_logits, anomaly_masks)
             
             scaler.scale(loss_pred).backward()
             scaler.step(opt_pred)
-            scaler.update()
             
             # --- 3. RL Agent Training ---
-            opt_agent.zero_grad()
+            opt_agent.zero_grad(set_to_none=True)
             state = env.get_state(images, batch_history)
             
             with torch.amp.autocast('cuda'):
-                probs = agent(state, resnet_features)
+                probs, threshold = agent(state, resnet_feats)
                 dist = torch.distributions.Categorical(probs)
                 action = dist.sample()
                 log_prob = dist.log_prob(action)
@@ -109,8 +108,8 @@ def train(category):
                     real_res_temp = torch.abs(images - template).mean(dim=1, keepdim=True)
                     real_res = 0.5 * real_res_ae + 0.5 * real_res_temp
                     
-                    real_pred_logits = predictor(real_res, resnet_features)
-                    real_pred = torch.sigmoid(real_pred_logits) # Convert to probs for reward
+                    real_pred_logits = predictor(real_res, resnet_feats)
+                    real_pred = torch.sigmoid(real_pred_logits) 
                     reward = env.calculate_reward(images, real_pred, batch_history, action, beta)
                 
                 loss_agent = -(log_prob * reward).mean()
@@ -125,22 +124,19 @@ def train(category):
             total_loss_ae += loss_ae.item()
             total_loss_pred += loss_pred.item()
 
-            # Clear some memory
-            del reconstructed, resnet_features, aug_images, aug_reconstructed, aug_resnet_feat, residual_map, pred_logits, real_pred_logits, loss_ae, loss_pred, loss_agent
-            
         avg_reward = total_reward / len(dataloader)
         avg_ae = total_loss_ae / len(dataloader)
         avg_pred = total_loss_pred / len(dataloader)
         
         print(f"Epoch {epoch}/{Config.EPOCHS} | Beta: {beta:.2f} | Reward: {avg_reward:.4f} | AE Loss: {avg_ae:.6f} | Pred Loss: {avg_pred:.6f}")
         torch.cuda.empty_cache()
-        torch.cuda.empty_cache()
 
     os.makedirs("checkpoints", exist_ok=True)
-    torch.save(ae.state_dict(), f"checkpoints/ae_{category}.pth")
-    torch.save(predictor.state_dict(), f"checkpoints/pred_{category}.pth")
-    torch.save(agent.state_dict(), f"checkpoints/agent_{category}.pth")
-    torch.save(template, f"checkpoints/template_{category}.pth") # Save template too
+    time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    torch.save(ae.state_dict(), f"checkpoints/ae_{category}_{time}.pth")
+    torch.save(predictor.state_dict(), f"checkpoints/pred_{category}_{time}.pth")
+    torch.save(agent.state_dict(), f"checkpoints/agent_{category}_{time}.pth")
+    torch.save(template, f"checkpoints/template_{category}_{time}.pth") 
     print("Training completed and models saved.")
 
 if __name__ == "__main__":
