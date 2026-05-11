@@ -133,11 +133,11 @@ def train(category):
         torch.cuda.empty_cache()
 
     os.makedirs("checkpoints", exist_ok=True)
-    time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    torch.save(ae.state_dict(), f"checkpoints/ae_{category}_{time}.pth")
-    torch.save(predictor.state_dict(), f"checkpoints/pred_{category}_{time}.pth")
-    torch.save(agent.state_dict(), f"checkpoints/agent_{category}_{time}.pth")
-    torch.save(template, f"checkpoints/template_{category}_{time}.pth") 
+    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    torch.save(ae.state_dict(), f"checkpoints/ae_{category}_{current_time}.pth")
+    torch.save(predictor.state_dict(), f"checkpoints/pred_{category}_{current_time}.pth")
+    torch.save(agent.state_dict(), f"checkpoints/agent_{category}_{current_time}.pth")
+    torch.save(template, f"checkpoints/template_{category}_{current_time}.pth") 
     print("Training completed and models saved.")
 
 if __name__ == "__main__":

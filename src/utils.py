@@ -7,7 +7,7 @@ import cv2
 class Config:
     DATA_ROOT = "./data/"
     CATEGORIES = ["bottle", "cable", "capsule", "carpet", "grid", "hazelnut", "leather", "metal_nut", "pill", "screw", "tile", "toothbrush", "transistor", "wood", "zipper"]
-    IMG_SIZE = 256
+    IMG_SIZE = 128
     PATCH_SIZE = 4
     BATCH_SIZE = 4
     LR_AE = 1e-4
